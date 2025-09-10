@@ -1,9 +1,7 @@
 # Brewfile for Android-focused macOS setup
 
 # Taps
-tap "homebrew/bundle"
 tap "homebrew/cask"
-tap "homebrew/cask-fonts"
 
 # CLI Tools - Core Unix utilities
 brew "coreutils"        # GNU core utilities
@@ -26,7 +24,6 @@ brew "mas"              # Mac App Store CLI
 
 # Modern CLI replacements
 brew "bat"              # Better cat
-brew "exa"              # Better ls
 brew "fd"               # Better find
 brew "ripgrep"          # Better grep
 brew "fzf"              # Fuzzy finder
@@ -48,7 +45,6 @@ cask "wireshark"         # Network protocol analyzer
 
 # System monitoring (Linux-style)
 brew "glances"           # Better htop alternative
-brew "iotop"             # I/O monitoring
 brew "lsof"              # List open files
 brew "duf"               # Better df
 brew "dust"              # Better du
@@ -84,6 +80,10 @@ cask "hiddenbar"        # Menu bar management
 cask "appcleaner"       # Proper app uninstaller
 cask "marta"            # File manager
 cask "google-chrome"    # Web browser
+
+# macOS utilities
+cask "amphetamine"      # Keep Mac awake
+cask "aldente"          # Battery charge limiter
 
 # Android development tools
 cask "jetbrains-toolbox"
