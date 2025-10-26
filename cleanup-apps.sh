@@ -75,6 +75,13 @@ APPS_TO_REMOVE=(
     "Time Machine.app"
     "Books.app"
     "Freeform.app"
+    "Home.app"
+    "Shortcuts.app"
+    "QuickTime Player.app"
+    "Dictionary.app"
+    "Font Book.app"
+    "Image Capture.app"
+    "Migration Assistant.app"
 )
 
 print_step "Cleaning up unwanted applications..."
@@ -103,24 +110,12 @@ done
 print_step "Disabling unwanted services..."
 
 # Disable Spotlight indexing for non-essential locations
-sudo mdutil -a -i off
-sudo mdutil -a -i on /  # Re-enable for root only
+sudo mdutil -a -i off 2>/dev/null
+sudo mdutil -a -i on / 2>/dev/null  # Re-enable for root only
 
-# Disable various services
-SERVICES_TO_DISABLE=(
-    "com.apple.netbiosd"        # NetBIOS
-    "com.apple.AirPlayXPCHelper" # AirPlay
-    "com.apple.rcd"             # Remote CD/DVD
-)
-
-for service in "${SERVICES_TO_DISABLE[@]}"; do
-    if launchctl list | grep -q "$service"; then
-        print_step "Disabling ${service}..."
-        sudo launchctl unload -w "/System/Library/LaunchDaemons/${service}.plist" 2>/dev/null || \
-        launchctl unload -w "/System/Library/LaunchAgents/${service}.plist" 2>/dev/null || \
-        print_warning "Could not disable ${service}"
-    fi
-done
+# Note: System services like NetBIOS, AirPlay, etc. require SIP disabled to unload
+# These are better disabled through System Settings for security
+print_warning "For complete service control, disable AirPlay/NetBIOS in System Settings"
 
 # Disable unnecessary features
 print_step "Disabling unnecessary features..."
@@ -165,7 +160,6 @@ DOCK_APPS=(
     "/Applications/iTerm.app"
     "/Applications/Visual Studio Code.app"
     "/Applications/Google Chrome.app"
-    "/Applications/Marta.app"
     "/Applications/JetBrains Toolbox.app"
     "/System/Applications/System Settings.app"
 )

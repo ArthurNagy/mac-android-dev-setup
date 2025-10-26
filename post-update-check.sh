@@ -33,12 +33,14 @@ print_step "Checking macOS configuration after update..."
 # Check for unwanted apps that may have returned
 print_step "Checking for reinstalled bloatware apps..."
 UNWANTED_APPS=(
-    "GarageBand.app" "iMovie.app" "Numbers.app" "Pages.app" 
+    "GarageBand.app" "iMovie.app" "Numbers.app" "Pages.app"
     "Chess.app" "DVD Player.app" "Photo Theater.app" "Stickies.app"
     "Calendar.app" "Contacts.app" "FaceTime.app" "Mail.app"
     "Maps.app" "Messages.app" "Music.app" "News.app" "Notes.app"
     "Photos.app" "Podcasts.app" "Reminders.app" "Stocks.app"
     "TV.app" "Voice Memos.app" "Weather.app" "Books.app" "Freeform.app"
+    "Home.app" "Shortcuts.app" "QuickTime Player.app" "Dictionary.app"
+    "Font Book.app" "Image Capture.app" "Migration Assistant.app"
 )
 
 apps_found=0

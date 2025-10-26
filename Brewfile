@@ -1,8 +1,5 @@
 # Brewfile for Android-focused macOS setup
 
-# Taps
-tap "homebrew/cask"
-
 # CLI Tools - Core Unix utilities
 brew "coreutils"        # GNU core utilities
 brew "findutils"        # GNU find, locate, updatedb, xargs
@@ -24,6 +21,7 @@ brew "mas"              # Mac App Store CLI
 
 # Modern CLI replacements
 brew "bat"              # Better cat
+brew "eza"              # Better ls (maintained fork of exa)
 brew "fd"               # Better find
 brew "ripgrep"          # Better grep
 brew "fzf"              # Fuzzy finder
@@ -51,9 +49,11 @@ brew "dust"              # Better du
 brew "procs"             # Better ps
 
 # Container and virtualization
-brew "docker"            # Containerization
-brew "docker-compose"    # Container orchestration
-brew "colima"            # Docker runtime for macOS
+# Note: Choose either OrbStack (recommended, faster) or Colima (free, open-source)
+cask "orbstack"          # Fast Docker Desktop alternative (recommended)
+# brew "docker"          # Not needed with OrbStack (includes Docker CLI)
+# brew "docker-compose"  # Not needed with OrbStack (included)
+# brew "colima"          # Alternative: lightweight, FOSS Docker runtime
 
 # Security tools
 brew "gnupg"             # GPG encryption
@@ -74,15 +74,12 @@ cask "font-jetbrains-mono-nerd-font"
 # GUI Applications
 cask "iterm2"           # Better terminal
 cask "rectangle"        # Window management
-cask "raycast"          # Better Spotlight
 cask "visual-studio-code"
 cask "hiddenbar"        # Menu bar management
 cask "appcleaner"       # Proper app uninstaller
-cask "marta"            # File manager
 cask "google-chrome"    # Web browser
 
 # macOS utilities
-cask "amphetamine"      # Keep Mac awake
 cask "aldente"          # Battery charge limiter
 
 # Android development tools

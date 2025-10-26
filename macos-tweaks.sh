@@ -10,6 +10,22 @@ print_success() {
     echo -e "\033[0;32m✓\033[0m $1"
 }
 
+print_warning() {
+    echo -e "\033[1;33m⚠\033[0m $1"
+}
+
+# Check SIP status
+print_step "Checking System Integrity Protection (SIP) status..."
+sip_status=$(csrutil status 2>&1)
+if echo "$sip_status" | grep -q "enabled"; then
+    print_warning "SIP is enabled (recommended). Some system services cannot be disabled."
+    print_warning "This script will disable what it can without compromising security."
+    SIP_ENABLED=true
+else
+    print_warning "SIP is disabled. You can disable system services, but this is a security risk."
+    SIP_ENABLED=false
+fi
+
 print_step "Applying macOS system tweaks..."
 
 # Dock tweaks
@@ -29,20 +45,8 @@ defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"  # Search cu
 defaults write com.apple.finder FXEnableExtensionChangeWarning -bool false
 defaults write NSGlobalDomain AppleShowAllExtensions -bool true
 
-# Show hidden files
-defaults write com.apple.finder AppleShowAllFiles -bool true
-
 # Disable creation of .DS_Store files on network drives
 defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true
-
-# Screenshot tweaks
-print_step "Configuring screenshots..."
-defaults write com.apple.screencapture location -string "$HOME/Desktop/Screenshots"
-defaults write com.apple.screencapture type -string "png"
-defaults write com.apple.screencapture disable-shadow -bool true
-
-# Create Screenshots directory
-mkdir -p "$HOME/Desktop/Screenshots"
 
 # Keyboard and input tweaks
 print_step "Configuring keyboard..."
@@ -73,36 +77,57 @@ defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
 print_step "Disabling unnecessary background services..."
 
 # Disable Spotlight indexing for better performance (keep only root)
-sudo mdutil -a -i off
-sudo mdutil -a -i on /
+sudo mdutil -a -i off 2>/dev/null
+sudo mdutil -a -i on / 2>/dev/null
 
 # Disable photo analysis (heavy CPU usage)
 defaults write com.apple.photoanalysisd enabled -bool false
 
-# Disable various Apple ecosystem services
-SERVICES_TO_DISABLE=(
-    "com.apple.bird"            # CloudKit/iCloud sync
+# Disable various Apple ecosystem services (user-level)
+# Note: System-level services require SIP to be disabled, which is not recommended
+print_step "Disabling user-level services..."
+
+# Get current user ID for launchctl disable commands
+USER_ID=$(id -u)
+
+# User-level services that can be disabled safely
+USER_SERVICES=(
     "com.apple.parsecd"         # Spotlight suggestions
     "com.apple.knowledge-agent" # Siri knowledge base
     "com.apple.assistantd"      # Siri assistant
-    "com.apple.CallHistoryPluginHelper" # Call history sync
-    "com.apple.CallHistorySyncHelper"   # Call history sync
-    "com.apple.cloudd"          # iCloud daemon
-    "com.apple.cloudpaird"      # iCloud pairing
-    "com.apple.cloudphotod"     # iCloud Photos
-    "com.apple.netbiosd"        # NetBIOS
-    "com.apple.AirPlayXPCHelper" # AirPlay
-    "com.apple.rcd"             # Remote CD/DVD
 )
 
-for service in "${SERVICES_TO_DISABLE[@]}"; do
-    if launchctl list | grep -q "$service"; then
-        print_step "Disabling ${service}..."
-        sudo launchctl unload -w "/System/Library/LaunchDaemons/${service}.plist" 2>/dev/null || \
-        launchctl unload -w "/System/Library/LaunchAgents/${service}.plist" 2>/dev/null || \
-        print_warning "Could not disable ${service}"
+for service in "${USER_SERVICES[@]}"; do
+    if launchctl list | grep -q "$service" 2>/dev/null; then
+        print_step "Disabling user service ${service}..."
+        launchctl disable "gui/${USER_ID}/${service}" 2>/dev/null && \
+        launchctl kill SIGTERM "gui/${USER_ID}/${service}" 2>/dev/null
+        print_success "Disabled ${service}"
     fi
 done
+
+# These system services require SIP disabled - only attempt if SIP is off
+if [ "$SIP_ENABLED" = false ]; then
+    print_warning "SIP is disabled. Attempting to disable system services..."
+    SYSTEM_SERVICES=(
+        "com.apple.bird"            # CloudKit/iCloud sync
+        "com.apple.cloudd"          # iCloud daemon
+        "com.apple.cloudpaird"      # iCloud pairing
+        "com.apple.cloudphotod"     # iCloud Photos
+    )
+
+    for service in "${SYSTEM_SERVICES[@]}"; do
+        if launchctl list | grep -q "$service" 2>/dev/null; then
+            print_step "Disabling system service ${service}..."
+            sudo launchctl bootout system/"${service}" 2>/dev/null && \
+            print_success "Disabled ${service}" || \
+            print_warning "Could not disable ${service}"
+        fi
+    done
+else
+    print_warning "System services (iCloud, etc.) cannot be disabled with SIP enabled."
+    print_warning "You can disable them manually in System Settings > Apple ID"
+fi
 
 # Terminal tweaks
 print_step "Configuring Terminal..."
@@ -134,6 +159,44 @@ sudo pmset -a sms 0
 
 # GPU power management (force integrated graphics when possible)
 sudo pmset -a gpuswitch 0
+
+# Enhanced battery optimizations
+print_step "Applying enhanced battery optimizations..."
+
+# Disable background app refresh (battery drain)
+print_step "Disabling background app refresh..."
+defaults write com.apple.appstore WebKitAutomaticPushNotificationEnabled -bool false
+defaults write com.apple.appstoreagent AutomaticCheckEnabled -bool false
+
+# Disable Apple Watch unlock (Bluetooth drain)
+print_step "Disabling Apple Watch unlock..."
+sudo defaults write /Library/Preferences/com.apple.apsd Enabled -bool false 2>/dev/null || true
+
+# Disable location services for unnecessary apps (battery drain)
+print_step "Disabling location services..."
+sudo defaults write /var/db/locationd/Library/Preferences/ByHost/com.apple.locationd LocationServicesEnabled -bool false 2>/dev/null || true
+
+# Disable Bluetooth when not in use (can be re-enabled in System Settings)
+print_step "Setting Bluetooth to off by default..."
+sudo defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0 2>/dev/null || true
+
+# Disable Wi-Fi when ethernet is connected (save power)
+print_step "Disabling Wi-Fi power boost..."
+sudo /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport en0 prefs DisconnectOnLogout=YES 2>/dev/null || true
+
+# Reduce transparency effects (GPU usage)
+print_step "Reducing transparency effects..."
+defaults write com.apple.universalaccess reduceTransparency -bool true
+
+# Disable automatic brightness adjustment (screen is biggest battery drain)
+print_step "Disabling automatic brightness..."
+sudo defaults write /Library/Preferences/com.apple.iokit.AmbientLightSensor "Automatic Display Enabled" -bool false 2>/dev/null || true
+
+# Disable keyboard backlight auto-adjust
+print_step "Disabling keyboard backlight auto-adjustment..."
+sudo defaults write /Library/Preferences/com.apple.iokit.AmbientLightSensor "Automatic Keyboard Enabled" -bool false 2>/dev/null || true
+
+print_success "Enhanced battery optimizations applied"
 
 # Restart affected applications
 print_step "Restarting affected applications..."

@@ -79,15 +79,15 @@ else
         coreutils findutils gnu-tar gnu-sed gawk gnutls gnu-getopt grep \
         git curl wget tree htop neofetch \
         neovim tmux zsh-autosuggestions zsh-syntax-highlighting \
-        fzf ripgrep fd bat exa delta \
+        fzf ripgrep fd bat eza delta \
         node python@3.11 \
         scrcpy adb-enhanced jq
     
     # GUI Applications
     brew install --cask \
-        iterm2 rectangle raycast visual-studio-code \
+        iterm2 rectangle visual-studio-code \
         hiddenbar appcleaner jetbrains-toolbox \
-        google-chrome marta
+        google-chrome
     
     # Install Xcode from Mac App Store (required for Android development)
     if command -v mas &> /dev/null; then
@@ -147,9 +147,9 @@ export PATH="$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$PATH"
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 # Aliases
-alias ll='exa -la --icons'
-alias la='exa -a --icons'
-alias ls='exa --icons'
+alias ll='eza -la --icons'
+alias la='eza -a --icons'
+alias ls='eza --icons'
 alias cat='bat'
 alias grep='rg'
 alias find='fd'
@@ -164,11 +164,11 @@ alias reload='source ~/.zshrc'
 alias brewup='brew update && brew upgrade && brew cleanup'
 
 # More Linux-like aliases
-alias ll='exa -la --icons --git'
-alias la='exa -a --icons'
-alias l='exa --icons'
-alias lst='exa --tree --icons'
-alias llt='exa -la --tree --icons --git'
+alias ll='eza -la --icons --git'
+alias la='eza -a --icons'
+alias l='eza --icons'
+alias lst='eza --tree --icons'
+alias llt='eza -la --tree --icons --git'
 
 # System information (Linux-style)
 alias lscpu='sysctl -n machdep.cpu.brand_string'
@@ -206,8 +206,16 @@ alias sysinfo='neofetch; df -h; vm_stat'
 
 # Service management (systemd-like aliases)
 alias services='launchctl list'
-alias service-start='launchctl load'
-alias service-stop='launchctl unload'
+alias service-start='launchctl bootstrap'
+alias service-stop='launchctl bootout'
+
+# Android development aliases
+alias adb-devices='adb devices -l'
+alias adb-log='adb logcat -v color'
+alias adb-install='adb install -r'
+alias adb-wireless='adb tcpip 5555'
+alias adb-screenshot='adb exec-out screencap -p > screenshot-$(date +%Y%m%d-%H%M%S).png'
+alias adb-restart='adb kill-server && adb start-server'
 
 mkcd() { mkdir -p "$1" && cd "$1" }
 EOF
@@ -230,5 +238,4 @@ print_step "Next steps:"
 echo "1. Open JetBrains Toolbox and install Android Studio"
 echo "2. Configure Rectangle window management shortcuts"
 echo "3. Set up Android SDK path in Android Studio"
-echo "4. Configure Raycast hotkeys"
-echo "5. Install any additional Android Studio plugins you need"
+echo "4. Install any additional Android Studio plugins you need"
