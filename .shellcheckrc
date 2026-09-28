@@ -1,0 +1,3 @@
+# Messages mention ~/.zshrc literally; that is text, not a path to expand.
+disable=SC2088
+external-sources=true

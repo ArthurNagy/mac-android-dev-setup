@@ -1,6 +1,5 @@
 # macOS
 .DS_Store
-.DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
@@ -12,6 +11,11 @@ Thumbs.db
 *.temp
 *.log
 
+# Backups
+*.backup
+*.bak
+*.orig
+
 # IDE files
 .vscode/
 .idea/
@@ -21,3 +25,4 @@ Thumbs.db
 # User-specific files
 *.local
 .env
+.claude/settings.local.json
