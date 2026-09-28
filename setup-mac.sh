@@ -1,241 +1,218 @@
 #!/bin/bash
+#
+# Set up an Apple silicon Mac (macOS 15-27) for Android / Kotlin Multiplatform / iOS work.
+#
+#   ./setup-mac.sh                tools + shell config, then asks about tweaks and app cleanup
+#   ./setup-mac.sh --all          also run macos-tweaks.sh and cleanup-apps.sh (they still ask per change)
+#   ./setup-mac.sh --shell        only (re)install the managed zsh config
+#   ./setup-mac.sh --no-system    never run macos-tweaks.sh / cleanup-apps.sh
+#   ./setup-mac.sh -n|--dry-run   print what would happen (same as DRY_RUN=1)
+#
+# Safe to re-run: every step checks what is already there. Exits non-zero if a step failed.
 
-# MacBook Apple Silicon Android Development Setup Script
-# Run with: bash setup-mac.sh
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-set -e
+usage() { sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'; }
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+SYSTEM=ask; ONLY_SHELL=0
+for arg in "$@"; do
+    case "$arg" in
+        --all)        SYSTEM=yes ;;
+        --no-system)  SYSTEM=no ;;
+        --shell)      ONLY_SHELL=1 ;;
+        -n|--dry-run) enable_dry_run ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            usage; die "Unknown option: $arg" ;;
+    esac
+done
 
-print_step() {
-    echo -e "${BLUE}==>${NC} $1"
-}
+require_apple_silicon
+require_macos 15
+is_dry_run && print_warning "Dry run: nothing will be changed."
 
-print_success() {
-    echo -e "${GREEN}✓${NC} $1"
-}
+BREWFILE="$SCRIPT_DIR/Brewfile"
+MANAGED_SRC="$SCRIPT_DIR/zsh/mac-android-dev.zsh"
+MANAGED_DIR="$HOME/.config/mac-android-dev-setup"
+MANAGED_DST="$MANAGED_DIR/zshrc.zsh"
+BLOCK_BEGIN="# >>> mac-android-dev-setup >>>"
+BLOCK_END="# <<< mac-android-dev-setup <<<"
 
-print_warning() {
-    echo -e "${YELLOW}⚠${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}✗${NC} $1"
-}
-
-# Check if running on macOS
-if [[ "$OSTYPE" != "darwin"* ]]; then
-    print_error "This script is for macOS only"
-    exit 1
-fi
-
-# Check for Apple Silicon
-if [[ $(uname -m) != "arm64" ]]; then
-    print_warning "This script is optimized for Apple Silicon Macs"
-fi
-
-print_step "Starting MacBook Pro Android development setup..."
-
-# Install Command Line Tools
-print_step "Installing Xcode Command Line Tools..."
-if ! xcode-select -p &> /dev/null; then
-    xcode-select --install
-    print_warning "Please complete the Xcode Command Line Tools installation and run this script again"
-    exit 1
-else
-    print_success "Xcode Command Line Tools already installed"
-fi
-
-# Install Homebrew
-print_step "Installing Homebrew..."
-if ! command -v brew &> /dev/null; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    
-    # Add Homebrew to PATH for Apple Silicon
-    echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-    
-    print_success "Homebrew installed"
-else
-    print_success "Homebrew already installed"
-    brew update
-fi
-
-# Install packages via Homebrew
-print_step "Installing packages via Homebrew..."
-if [[ -f "Brewfile" ]]; then
-    print_success "Found Brewfile, installing packages from bundle..."
-    brew bundle install --file=Brewfile
-else
-    print_step "No Brewfile found, installing essential packages for Android development..."
-    
-    # Essential CLI tools
-    brew install \
-        coreutils findutils gnu-tar gnu-sed gawk gnutls gnu-getopt grep \
-        git curl wget tree htop neofetch \
-        neovim tmux zsh-autosuggestions zsh-syntax-highlighting \
-        fzf ripgrep fd bat eza delta \
-        node python@3.11 \
-        scrcpy adb-enhanced jq
-    
-    # GUI Applications
-    brew install --cask \
-        iterm2 rectangle visual-studio-code \
-        hiddenbar appcleaner jetbrains-toolbox \
-        google-chrome
-    
-    # Install Xcode from Mac App Store (required for Android development)
-    if command -v mas &> /dev/null; then
-        print_step "Installing Xcode from Mac App Store..."
-        mas install 497799835  # Xcode
+install_shell_config() {
+    print_step "Shell configuration"
+    run mkdir -p "$MANAGED_DIR" || { FAILURES=$((FAILURES + 1)); print_warning "Could not create $MANAGED_DIR"; return 1; }
+    if run cp "$MANAGED_SRC" "$MANAGED_DST"; then
+        is_dry_run || print_success "Installed $MANAGED_DST"
     else
-        print_warning "mas-cli not found. Please install Xcode manually from the Mac App Store"
+        FAILURES=$((FAILURES + 1)); print_warning "Could not copy the managed config"; return 1
     fi
-fi
+    if grep -qF "$BLOCK_BEGIN" "$HOME/.zshrc" 2>/dev/null; then
+        print_success "~/.zshrc already sources it"
+    elif is_dry_run; then
+        run "back up ~/.zshrc, then append the mac-android-dev-setup source block"
+    else
+        local bk=""
+        bk="$HOME/.zshrc.backup-$(date +%Y%m%d-%H%M%S)"
+        if [[ -e "$HOME/.zshrc" ]]; then
+            cp "$HOME/.zshrc" "$bk" || { FAILURES=$((FAILURES + 1)); print_warning "Could not back up ~/.zshrc; left it unchanged."; return 1; }
+        fi
+        if cat >> "$HOME/.zshrc" <<EOF
 
-print_success "Packages installed"
-
-# Setup shell (Oh My Zsh)
-print_step "Setting up shell environment..."
-if [[ ! -d "$HOME/.oh-my-zsh" ]]; then
-    sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-    
-    # Install useful plugins
-    git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
-    git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
-    
-    # Setup .zshrc for Android development
-    if [[ -f "$HOME/.zshrc" ]]; then
-        print_warning "Backing up existing .zshrc to .zshrc.backup"
-        cp "$HOME/.zshrc" "$HOME/.zshrc.backup"
-    fi
-    
-    cat > ~/.zshrc << 'EOF'
-export ZSH="$HOME/.oh-my-zsh"
-ZSH_THEME="robbyrussell"
-plugins=(git zsh-autosuggestions zsh-syntax-highlighting macos)
-source $ZSH/oh-my-zsh.sh
-
-# Homebrew (Apple Silicon)
-if [[ -f "/opt/homebrew/bin/brew" ]]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-fi
-
-# GNU tools priority
-export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/findutils/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/gnu-tar/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/gawk/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/gnu-getopt/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/grep/libexec/gnubin:$PATH"
-
-# Editor
-export EDITOR="nvim"
-export VISUAL="nvim"
-
-# Android Development
-export ANDROID_HOME="$HOME/Library/Android/sdk"
-export PATH="$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$PATH"
-
-# Java for Android
-export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-
-# Aliases
-alias ll='eza -la --icons'
-alias la='eza -a --icons'
-alias ls='eza --icons'
-alias cat='bat'
-alias grep='rg'
-alias find='fd'
-alias vim='nvim'
-alias vi='nvim'
-alias gs='git status'
-alias ga='git add'
-alias gc='git commit'
-alias gp='git push'
-alias gl='git log --oneline'
-alias reload='source ~/.zshrc'
-alias brewup='brew update && brew upgrade && brew cleanup'
-
-# More Linux-like aliases
-alias ll='eza -la --icons --git'
-alias la='eza -a --icons'
-alias l='eza --icons'
-alias lst='eza --tree --icons'
-alias llt='eza -la --tree --icons --git'
-
-# System information (Linux-style)
-alias lscpu='sysctl -n machdep.cpu.brand_string'
-alias lsusb='system_profiler SPUSBDataType'
-alias lspci='system_profiler SPPCIDataType'
-alias mount='mount | column -t'
-
-# Network aliases (Linux-style)
-alias ports='lsof -i -P -n | grep LISTEN'
-alias listening='lsof -i -P | grep LISTEN'
-alias netstat='netstat -tulpn'
-alias myip='curl -s https://httpbin.org/ip | jq -r .origin'
-alias localip='ipconfig getifaddr en0 || ipconfig getifaddr en1'
-alias ips='ifconfig | grep "inet " | grep -v 127.0.0.1 | cut -d " " -f2'
-alias flush='sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder'
-
-# Process management
-alias psg='ps aux | grep'
-alias topcpu='ps aux | sort -k3 -nr | head -10'
-alias topmem='ps aux | sort -k4 -nr | head -10'
-
-# Package management (Linux-style)
-alias install='brew install'
-alias remove='brew uninstall'
-alias search='brew search'
-alias update='brew update && brew upgrade'
-alias upgrade='brew upgrade'
-alias list='brew list'
-alias info='brew info'
-
-# System maintenance (Linux-like)
-alias sysupdate='sudo softwareupdate -i -a; brew update && brew upgrade && brew cleanup; mas upgrade'
-alias sysclean='brew cleanup --prune=all && brew autoremove; sudo periodic daily weekly monthly'
-alias sysinfo='neofetch; df -h; vm_stat'
-
-# Service management (systemd-like aliases)
-alias services='launchctl list'
-alias service-start='launchctl bootstrap'
-alias service-stop='launchctl bootout'
-
-# Android development aliases
-alias adb-devices='adb devices -l'
-alias adb-log='adb logcat -v color'
-alias adb-install='adb install -r'
-alias adb-wireless='adb tcpip 5555'
-alias adb-screenshot='adb exec-out screencap -p > screenshot-$(date +%Y%m%d-%H%M%S).png'
-alias adb-restart='adb kill-server && adb start-server'
-
-mkcd() { mkdir -p "$1" && cd "$1" }
+$BLOCK_BEGIN
+# Managed by $SCRIPT_DIR (re-run setup-mac.sh --shell to update).
+[[ -r "\$HOME/.config/mac-android-dev-setup/zshrc.zsh" ]] && source "\$HOME/.config/mac-android-dev-setup/zshrc.zsh"
+$BLOCK_END
 EOF
-    
-    print_success "Oh My Zsh and basic config installed"
-else
-    print_success "Oh My Zsh already installed"
+        then
+            print_success "Added the managed block to the end of ~/.zshrc${bk:+ (backup: $bk)}"
+        else
+            FAILURES=$((FAILURES + 1)); print_warning "Could not write to ~/.zshrc"; return 1
+        fi
+    fi
+    # The 2025 version of this script wrote aliases and PATH lines straight into
+    # ~/.zshrc. Only line numbers are printed: ~/.zshrc can hold secrets.
+    local lines
+    lines="$(grep -nE "$LEGACY_ZSHRC_RE" "$HOME/.zshrc" 2>/dev/null | cut -d: -f1 | tr '\n' ' ')"
+    if [[ -n "$lines" ]]; then
+        print_warning "~/.zshrc still contains the 2025 generated block (lines: $lines)."
+        print_info "Delete the Homebrew/GNU PATH, ANDROID_HOME, JAVA_HOME and alias lines of that block by hand;"
+        print_info "the managed config replaces them. Keep your own exports and secrets. See README."
+    fi
+}
+
+if [[ $ONLY_SHELL == 1 ]]; then
+    install_shell_config
+    is_dry_run || print_success "Open a new terminal (or: source ~/.zshrc)."
+    (( FAILURES == 0 )); exit
 fi
 
-# macOS system tweaks
-print_step "Applying macOS tweaks..."
-bash macos-tweaks.sh
+print_step "Setting up $(sw_vers -productName) $(macos_version) on $(sysctl -n machdep.cpu.brand_string)"
 
-# Cleanup default apps
-print_step "Cleaning up unwanted applications..."
-bash cleanup-apps.sh
+# --- Command Line Tools ---------------------------------------------------------------------------
+print_step "Xcode Command Line Tools"
+if xcode-select -p >/dev/null 2>&1; then
+    print_success "Installed ($(xcode-select -p))"
+else
+    run xcode-select --install
+    is_dry_run || die "Finish the Command Line Tools installer, then run this script again."
+fi
 
-print_success "Setup complete! Please restart your terminal or run 'source ~/.zshrc'"
-print_step "Next steps:"
-echo "1. Open JetBrains Toolbox and install Android Studio"
-echo "2. Configure Rectangle window management shortcuts"
-echo "3. Set up Android SDK path in Android Studio"
-echo "4. Install any additional Android Studio plugins you need"
+# --- Homebrew -------------------------------------------------------------------------------------
+print_step "Homebrew"
+if ! command -v brew >/dev/null 2>&1; then
+    if is_dry_run; then
+        run "download and run the Homebrew installer (https://brew.sh)"
+    else
+        # A failed download must not run an empty script and "succeed".
+        inst="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+            || die "Could not download the Homebrew installer (network or proxy?)."
+        /bin/bash -c "$inst" || die "Homebrew installation failed."
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
+fi
+if [[ -x /opt/homebrew/bin/brew ]] && ! grep -qs 'brew shellenv' "$HOME/.zprofile"; then
+    # shellcheck disable=SC2016  # written to ~/.zprofile unexpanded, on purpose
+    if is_dry_run; then run 'append eval "$(/opt/homebrew/bin/brew shellenv)" to ~/.zprofile'
+    else printf '\neval "$(/opt/homebrew/bin/brew shellenv)"\n' >> "$HOME/.zprofile"; fi
+fi
+command -v brew >/dev/null 2>&1 && print_success "$(brew --version | head -1)"
+
+# --- Packages -------------------------------------------------------------------------------------
+print_step "Packages from the Brewfile"
+if command -v brew >/dev/null 2>&1; then
+    print_info "Expect a password prompt: mas (Xcode) and pkg-based casks such as wireshark-app install with sudo."
+    try brew update
+    # --no-upgrade: install what is missing, do not force-upgrade everything else.
+    # Existing apps (e.g. a manually installed Ghostty) are adopted, not reinstalled.
+    if ! run brew bundle install --no-upgrade --file="$BREWFILE"; then
+        FAILURES=$((FAILURES + 1))
+        print_warning "Some Brewfile entries failed; the rest was installed. See: brew bundle check --no-upgrade --verbose --file=\"$BREWFILE\""
+    fi
+elif is_dry_run; then
+    run brew bundle install --no-upgrade --file="$BREWFILE"
+else
+    FAILURES=$((FAILURES + 1))
+    print_warning "Homebrew is not available; Brewfile packages were NOT installed."
+fi
+
+# --- Shell ----------------------------------------------------------------------------------------
+print_step "Oh My Zsh"
+if [[ -d "$HOME/.oh-my-zsh" ]]; then
+    print_success "Already installed"
+elif is_dry_run; then
+    run "install Oh My Zsh (unattended, keeping ~/.zshrc)"
+else
+    # KEEP_ZSHRC=yes: never replace an existing ~/.zshrc.
+    if omz="$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"; then
+        RUNZSH=no KEEP_ZSHRC=yes sh -c "$omz" "" --unattended \
+            || { FAILURES=$((FAILURES + 1)); print_warning "Oh My Zsh installation failed (the managed config works without it)."; }
+    else
+        FAILURES=$((FAILURES + 1)); print_warning "Could not download the Oh My Zsh installer (the managed config works without it)."
+    fi
+fi
+if [[ -d "$HOME/.oh-my-zsh" ]] && ! grep -qs 'oh-my-zsh.sh' "$HOME/.zshrc"; then
+    print_warning "Oh My Zsh is installed but ~/.zshrc does not load it (the installer keeps an existing ~/.zshrc)."
+    print_info "Add above the managed block: export ZSH=\"\$HOME/.oh-my-zsh\"; plugins=(git macos); source \$ZSH/oh-my-zsh.sh"
+fi
+install_shell_config
+
+# --- Android CLI and SDK baseline -------------------------------------------------------------------
+print_step "Android CLI and SDK"
+ANDROID_BIN=""
+for c in "$(command -v android 2>/dev/null || true)" /opt/homebrew/bin/android \
+         "${ANDROID_HOME:-$HOME/Library/Android/sdk}/cmdline-tools/latest/bin/android"; do
+    [[ -n "$c" && -x "$c" ]] && { ANDROID_BIN="$c"; break; }
+done
+if [[ -n "$ANDROID_BIN" ]]; then
+    try "$ANDROID_BIN" update
+    is_dry_run || print_success "Android CLI $("$ANDROID_BIN" info version 2>/dev/null | tail -1)"
+    SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+    missing=""
+    [[ -d "$SDK/platform-tools" ]] || missing="$missing platform-tools"
+    [[ -d "$SDK/emulator" ]] || missing="$missing emulator"
+    [[ -d "$SDK/cmdline-tools/latest" ]] || missing="$missing cmdline-tools/latest"
+    if [[ -n "$missing" ]]; then
+        # shellcheck disable=SC2086  # word splitting of the package list is intended
+        try "$ANDROID_BIN" --sdk="$SDK" sdk install $missing
+    else
+        print_success "SDK baseline present in $SDK (platforms and build-tools are installed per project by Gradle)"
+    fi
+elif is_dry_run; then
+    run "android update, then android sdk install platform-tools emulator cmdline-tools/latest (after brew installs android-cli)"
+else
+    FAILURES=$((FAILURES + 1))
+    print_warning "Android CLI not found; install it with: brew install --cask android-cli"
+fi
+
+# --- Optional system changes ----------------------------------------------------------------------------
+# In a dry run the child script runs too: it honours DRY_RUN and previews its own changes.
+run_system_script() {   # $1 script, $2 question
+    case "$SYSTEM" in
+        yes) ;;
+        no)  return 0 ;;
+        ask) is_dry_run || confirm "$2" || { print_info "Skipped $1"; return 0; } ;;
+    esac
+    # The child scripts still ask before each change; --all only skips this question.
+    bash "$SCRIPT_DIR/$1" || { FAILURES=$((FAILURES + 1)); print_warning "Failed (continuing): $1"; }
+}
+run_system_script macos-tweaks.sh "Apply macOS tweaks? (Dock, Finder, keyboard, trackpad, clock, reduce motion/transparency; it asks again before turning off Handoff/Universal Clipboard, classic Siri, crash dialogs and App Store auto-updates, and before power settings. Previous values are recorded.)"
+run_system_script cleanup-apps.sh "Offer to trash GarageBand/iMovie/Numbers/Pages and show dev-cache disk usage?"
+
+# --- Done ---------------------------------------------------------------------------------------------
+if is_dry_run; then
+    print_success "Dry run finished; nothing was changed."
+elif (( FAILURES > 0 )); then
+    print_warning "$FAILURES step(s) failed; see the warnings above. Fix them and re-run (it is safe to re-run)."
+else
+    print_success "Setup complete. Open a new terminal (or: source ~/.zshrc)."
+fi
+cat <<'EOF'
+Next steps:
+  1. JetBrains Toolbox: install Android Studio (lands in ~/Applications).
+  2. Xcode: open it once to accept the licence and install an iOS simulator runtime.
+  3. Rectangle: grant Accessibility access and pick shortcuts.
+  4. Run ./post-update-check.sh to verify everything.
+EOF
+(( FAILURES == 0 ))

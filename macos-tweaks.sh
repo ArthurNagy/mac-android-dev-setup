@@ -1,208 +1,188 @@
 #!/bin/bash
+#
+# macOS tweaks for a lean, Linux-like developer Mac (Apple silicon, macOS 15-27).
+#
+#   ./macos-tweaks.sh               apply (asks before the optional sections)
+#   ./macos-tweaks.sh -n|--dry-run  print what would change, change nothing (same as DRY_RUN=1)
+#   ./macos-tweaks.sh -h|--help     show this help
+#
+# Before writing, every key's previous value is recorded in
+# ~/.mac-android-dev-setup/backups/<timestamp>-tweaks/keys.tsv (the first run
+# is also kept as backups/original), so `./restore-defaults.sh --from-backup DIR`
+# puts back exactly these keys.
+#
+# Removed for macOS 26/27 because they did nothing or did harm (see README):
+# Spotlight off/on (forced a full reindex every run), photoanalysisd key,
+# launchctl disable of Siri/Spotlight agents, iCloud daemon bootout,
+# apsd/Bluetooth/location/ambient-light kill switches, `airport`, Intel-only
+# pmset keys, tcpkeepalive 0 (breaks Find My while asleep), killall Terminal.
 
-# macOS System Tweaks for Linux-like experience
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-print_step() {
-    echo -e "\033[0;34m==>\033[0m $1"
-}
+usage() { sed -n '3,7p' "$0" | sed 's/^# \{0,1\}//'; }
+for arg in "$@"; do
+    case "$arg" in
+        -n|--dry-run) enable_dry_run ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            usage; die "Unknown option: $arg" ;;
+    esac
+done
 
-print_success() {
-    echo -e "\033[0;32m✓\033[0m $1"
-}
+require_apple_silicon
+require_macos 15
+is_dry_run && print_warning "Dry run: nothing will be changed."
 
-print_warning() {
-    echo -e "\033[1;33m⚠\033[0m $1"
-}
+# --- Backup ------------------------------------------------------------------------
+BACKUP_DIR="$(new_backup_dir tweaks)"
+KEYS_FILE=""
+if ! is_dry_run; then
+    KEYS_FILE="$BACKUP_DIR/keys.tsv"
+    : > "$KEYS_FILE"
+    pmset -g custom > "$BACKUP_DIR/pmset-custom.txt" 2>/dev/null || true
+fi
+print_step "Recording previous values in $BACKUP_DIR"
 
-# Check SIP status
-print_step "Checking System Integrity Protection (SIP) status..."
-sip_status=$(csrutil status 2>&1)
-if echo "$sip_status" | grep -q "enabled"; then
-    print_warning "SIP is enabled (recommended). Some system services cannot be disabled."
-    print_warning "This script will disable what it can without compromising security."
-    SIP_ENABLED=true
+# --- Dock --------------------------------------------------------------------------
+print_step "Dock"
+tweak user com.apple.dock autohide bool true
+tweak user com.apple.dock autohide-delay float 0
+tweak user com.apple.dock autohide-time-modifier float 0.5
+tweak user com.apple.dock orientation string left
+tweak user com.apple.dock tilesize int 48
+tweak user com.apple.dock show-recents bool false
+
+# --- Finder ------------------------------------------------------------------------
+print_step "Finder"
+tweak user com.apple.finder ShowPathbar bool true
+tweak user com.apple.finder ShowStatusBar bool true
+tweak user com.apple.finder FXDefaultSearchScope string SCcf   # search the current folder
+tweak user com.apple.finder FXEnableExtensionChangeWarning bool false
+tweak user NSGlobalDomain AppleShowAllExtensions bool true
+tweak user com.apple.desktopservices DSDontWriteNetworkStores bool true   # no .DS_Store on network shares
+
+# --- Keyboard & text input ------------------------------------------------------------
+print_step "Keyboard and text input"
+tweak user NSGlobalDomain KeyRepeat int 2
+tweak user NSGlobalDomain InitialKeyRepeat int 15
+tweak user NSGlobalDomain ApplePressAndHoldEnabled bool false
+tweak user NSGlobalDomain NSAutomaticCapitalizationEnabled bool false
+tweak user NSGlobalDomain NSAutomaticDashSubstitutionEnabled bool false
+tweak user NSGlobalDomain NSAutomaticPeriodSubstitutionEnabled bool false
+tweak user NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled bool false
+tweak user NSGlobalDomain NSAutomaticSpellingCorrectionEnabled bool false
+
+# --- Trackpad: tap to click ------------------------------------------------------------
+# The built-in trackpad reads com.apple.AppleMultitouchTrackpad and the per-host
+# tapBehavior; the 2025 script only set the Bluetooth Magic Trackpad domain.
+print_step "Trackpad (tap to click, built-in and Magic Trackpad)"
+tweak user com.apple.AppleMultitouchTrackpad Clicking bool true
+tweak user com.apple.driver.AppleBluetoothMultitouch.trackpad Clicking bool true
+tweak host NSGlobalDomain com.apple.mouse.tapBehavior int 1
+tweak user NSGlobalDomain com.apple.mouse.tapBehavior int 1
+
+# --- Menu bar clock ----------------------------------------------------------------------
+# Since macOS 11 the clock ignores DateFormat; it reads these keys instead.
+print_step "Menu bar clock (weekday, 24-hour, seconds)"
+tweak user com.apple.menuextra.clock ShowDayOfWeek bool true
+tweak user com.apple.menuextra.clock Show24Hour bool true
+tweak user com.apple.menuextra.clock ShowSeconds bool true
+
+# --- Activity Monitor --------------------------------------------------------------------
+print_step "Activity Monitor"
+tweak user com.apple.ActivityMonitor OpenMainWindow bool true
+tweak user com.apple.ActivityMonitor IconType int 5
+tweak user com.apple.ActivityMonitor SortColumn string CPUUsage
+tweak user com.apple.ActivityMonitor SortDirection int 0
+
+# --- Less background chatter (asks first: these turn features off) ----------------------
+print_step "Handoff, classic Siri, crash dialogs, Time Machine prompts, iCloud default save, App Store auto-updates"
+print_info "Turning off Handoff also turns off Universal Clipboard. App Store apps then update via 'mas upgrade'."
+if is_dry_run || confirm "Turn these off?"; then
+    tweak host com.apple.coreservices.useractivityd ActivityAdvertisingAllowed bool false
+    tweak host com.apple.coreservices.useractivityd ActivityReceivingAllowed bool false
+    tweak user com.apple.assistant.support "Assistant Enabled" bool false
+    tweak user com.apple.Siri StatusMenuVisible bool false
+    tweak user com.apple.Siri UserHasDeclinedEnable bool true
+    tweak user com.apple.CrashReporter DialogType string none
+    tweak user com.apple.TimeMachine DoNotOfferNewDisksForBackup bool true
+    tweak user NSGlobalDomain NSDocumentSaveNewDocumentsToCloud bool false
+    tweak user com.apple.commerce AutoUpdate bool false
 else
-    print_warning "SIP is disabled. You can disable system services, but this is a security risk."
-    SIP_ENABLED=false
+    print_info "Skipped."
 fi
 
-print_step "Applying macOS system tweaks..."
+# --- Animations and transparency (Liquid Glass) ------------------------------------------
+# The two main compositor levers on macOS 26/27. The domain is protected: the
+# write fails unless your terminal app has Full Disk Access.
+print_step "Reduce transparency and reduce motion"
+ua_ok=1
+set_pref user com.apple.universalaccess reduceTransparency bool true || ua_ok=0
+set_pref user com.apple.universalaccess reduceMotion bool true || ua_ok=0
+if is_dry_run; then
+    :
+elif [[ $ua_ok == 1 ]]; then
+    print_success "Written. If the menu bar or Dock still look glassy, toggle them once in System Settings > Accessibility > Display / Motion."
+else
+    print_warning "Could not write com.apple.universalaccess (your terminal app lacks Full Disk Access)."
+    print_info "Set them by hand: System Settings > Accessibility > Display > Reduce transparency,"
+    print_info "and System Settings > Accessibility > Motion > Reduce motion."
+fi
 
-# Dock tweaks
-print_step "Configuring Dock..."
-defaults write com.apple.dock autohide -bool true
-defaults write com.apple.dock autohide-delay -float 0
-defaults write com.apple.dock autohide-time-modifier -float 0.5
-defaults write com.apple.dock orientation left
-defaults write com.apple.dock tilesize -int 48
-defaults write com.apple.dock show-recents -bool false
-
-# Finder tweaks
-print_step "Configuring Finder..."
-defaults write com.apple.finder ShowPathbar -bool true
-defaults write com.apple.finder ShowStatusBar -bool true
-defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"  # Search current folder
-defaults write com.apple.finder FXEnableExtensionChangeWarning -bool false
-defaults write NSGlobalDomain AppleShowAllExtensions -bool true
-
-# Disable creation of .DS_Store files on network drives
-defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true
-
-# Keyboard and input tweaks
-print_step "Configuring keyboard..."
-defaults write NSGlobalDomain KeyRepeat -int 2
-defaults write NSGlobalDomain InitialKeyRepeat -int 15
-defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
-
-# Trackpad tweaks
-print_step "Configuring trackpad..."
-defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad Clicking -bool true
-defaults write NSGlobalDomain com.apple.mouse.tapBehavior -int 1
-
-# Menu bar tweaks
-print_step "Configuring menu bar..."
-defaults write com.apple.menuextra.clock DateFormat -string "EEE MMM d  H:mm:ss"
-defaults write NSGlobalDomain _HIHideMenuBar -bool false
-
-# Disable annoying features
-print_step "Disabling annoying features..."
-defaults write NSGlobalDomain NSAutomaticCapitalizationEnabled -bool false
-defaults write NSGlobalDomain NSAutomaticDashSubstitutionEnabled -bool false
-defaults write NSGlobalDomain NSAutomaticPeriodSubstitutionEnabled -bool false
-defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
-defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
-
-
-# Disable heavy background services for performance and battery
-print_step "Disabling unnecessary background services..."
-
-# Disable Spotlight indexing for better performance (keep only root)
-sudo mdutil -a -i off 2>/dev/null
-sudo mdutil -a -i on / 2>/dev/null
-
-# Disable photo analysis (heavy CPU usage)
-defaults write com.apple.photoanalysisd enabled -bool false
-
-# Disable various Apple ecosystem services (user-level)
-# Note: System-level services require SIP to be disabled, which is not recommended
-print_step "Disabling user-level services..."
-
-# Get current user ID for launchctl disable commands
-USER_ID=$(id -u)
-
-# User-level services that can be disabled safely
-USER_SERVICES=(
-    "com.apple.parsecd"         # Spotlight suggestions
-    "com.apple.knowledge-agent" # Siri knowledge base
-    "com.apple.assistantd"      # Siri assistant
-)
-
-for service in "${USER_SERVICES[@]}"; do
-    if launchctl list | grep -q "$service" 2>/dev/null; then
-        print_step "Disabling user service ${service}..."
-        launchctl disable "gui/${USER_ID}/${service}" 2>/dev/null && \
-        launchctl kill SIGTERM "gui/${USER_ID}/${service}" 2>/dev/null
-        print_success "Disabled ${service}"
+# --- Power (admin) ---------------------------------------------------------------------------
+# Only settings that exist on Apple silicon. hibernatemode 3, standby 1 and
+# disksleep 10 are already the laptop defaults and are no longer written.
+print_step "Power settings (needs admin)"
+if is_dry_run || confirm "Set display sleep 15 min, sleep 30 min, Power Nap off, no wake for network access?"; then
+    if ensure_sudo; then
+        try sudo pmset -a displaysleep 15
+        try sudo pmset -a sleep 30
+        try sudo pmset -a powernap 0
+        try sudo pmset -a womp 0           # "Wake for network access"
+        try sudo pmset -a tcpkeepalive 1   # default; the 2025 script set 0, which breaks Find My Mac while asleep
     fi
-done
-
-# These system services require SIP disabled - only attempt if SIP is off
-if [ "$SIP_ENABLED" = false ]; then
-    print_warning "SIP is disabled. Attempting to disable system services..."
-    SYSTEM_SERVICES=(
-        "com.apple.bird"            # CloudKit/iCloud sync
-        "com.apple.cloudd"          # iCloud daemon
-        "com.apple.cloudpaird"      # iCloud pairing
-        "com.apple.cloudphotod"     # iCloud Photos
-    )
-
-    for service in "${SYSTEM_SERVICES[@]}"; do
-        if launchctl list | grep -q "$service" 2>/dev/null; then
-            print_step "Disabling system service ${service}..."
-            sudo launchctl bootout system/"${service}" 2>/dev/null && \
-            print_success "Disabled ${service}" || \
-            print_warning "Could not disable ${service}"
-        fi
-    done
 else
-    print_warning "System services (iCloud, etc.) cannot be disabled with SIP enabled."
-    print_warning "You can disable them manually in System Settings > Apple ID"
+    print_info "Skipped."
 fi
 
-# Terminal tweaks
-print_step "Configuring Terminal..."
-defaults write com.apple.terminal StringEncodings -array 4
-defaults write com.apple.terminal Shell -string "/bin/zsh"
+# --- Keep the very first snapshot ---------------------------------------------------------------
+# Later runs record already-tweaked values; backups/original is the pre-tweak state.
+if ! is_dry_run && [[ ! -d "$BACKUP_ROOT/original" ]]; then
+    cp -R "$BACKUP_DIR" "$BACKUP_ROOT/original"
+fi
 
-# Activity Monitor tweaks
-print_step "Configuring Activity Monitor..."
-defaults write com.apple.ActivityMonitor OpenMainWindow -bool true
-defaults write com.apple.ActivityMonitor IconType -int 5
-defaults write com.apple.ActivityMonitor SortColumn -string "CPUUsage"
-defaults write com.apple.ActivityMonitor SortDirection -int 0
-
-# Energy settings for maximum battery life and performance
-print_step "Configuring energy settings..."
-sudo pmset -a displaysleep 15
-sudo pmset -a sleep 30          # Auto sleep after 30 minutes (good for battery)
-sudo pmset -a disksleep 10      # Disk sleep after 10 minutes
-sudo pmset -a hibernatemode 3   # Enable hibernation (saves battery on long sleep)
-sudo pmset -a standby 1         # Enable standby mode (ultra-low power)
-sudo pmset -a standbydelayhigh 86400  # 24 hours before standby on AC
-sudo pmset -a standbydelaylow 3600    # 1 hour before standby on battery
-sudo pmset -a autopoweroff 1    # Enable auto power off (saves battery)
-sudo pmset -a powernap 0        # Disable Power Nap (background activity - battery drain)
-sudo pmset -a tcpkeepalive 0    # Disable wake for network access
-
-# Disable sudden motion sensor (not needed on SSDs)
-sudo pmset -a sms 0
-
-# GPU power management (force integrated graphics when possible)
-sudo pmset -a gpuswitch 0
-
-# Enhanced battery optimizations
-print_step "Applying enhanced battery optimizations..."
-
-# Disable background app refresh (battery drain)
-print_step "Disabling background app refresh..."
-defaults write com.apple.appstore WebKitAutomaticPushNotificationEnabled -bool false
-defaults write com.apple.appstoreagent AutomaticCheckEnabled -bool false
-
-# Disable Apple Watch unlock (Bluetooth drain)
-print_step "Disabling Apple Watch unlock..."
-sudo defaults write /Library/Preferences/com.apple.apsd Enabled -bool false 2>/dev/null || true
-
-# Disable location services for unnecessary apps (battery drain)
-print_step "Disabling location services..."
-sudo defaults write /var/db/locationd/Library/Preferences/ByHost/com.apple.locationd LocationServicesEnabled -bool false 2>/dev/null || true
-
-# Disable Bluetooth when not in use (can be re-enabled in System Settings)
-print_step "Setting Bluetooth to off by default..."
-sudo defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0 2>/dev/null || true
-
-# Disable Wi-Fi when ethernet is connected (save power)
-print_step "Disabling Wi-Fi power boost..."
-sudo /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport en0 prefs DisconnectOnLogout=YES 2>/dev/null || true
-
-# Reduce transparency effects (GPU usage)
-print_step "Reducing transparency effects..."
-defaults write com.apple.universalaccess reduceTransparency -bool true
-
-# Disable automatic brightness adjustment (screen is biggest battery drain)
-print_step "Disabling automatic brightness..."
-sudo defaults write /Library/Preferences/com.apple.iokit.AmbientLightSensor "Automatic Display Enabled" -bool false 2>/dev/null || true
-
-# Disable keyboard backlight auto-adjust
-print_step "Disabling keyboard backlight auto-adjustment..."
-sudo defaults write /Library/Preferences/com.apple.iokit.AmbientLightSensor "Automatic Keyboard Enabled" -bool false 2>/dev/null || true
-
-print_success "Enhanced battery optimizations applied"
-
-# Restart affected applications
-print_step "Restarting affected applications..."
-for app in "Dock" "Finder" "SystemUIServer" "Terminal"; do
-    killall "${app}" &> /dev/null || true
+# --- Restart affected UI processes ------------------------------------------------------------
+# Never kill the terminal that is running this script.
+print_step "Restarting Dock, Finder, SystemUIServer and ControlCenter"
+for app in Dock Finder SystemUIServer ControlCenter; do
+    if is_dry_run; then run killall "$app"; else killall "$app" >/dev/null 2>&1 || true; fi
 done
 
-print_success "System tweaks applied successfully"
-print_step "Some changes may require a restart to take effect"
+# --- Things a script cannot (or should not) change on macOS 27 ------------------------------
+cat <<'EOF'
+
+Manual steps (System Settings), recommended on macOS 27:
+  1. Spotlight stays ON: Siri AI, Mail and Xcode search need its index. To keep
+     build output out of it, add your dev folders under Spotlight > Search Privacy
+     (e.g. ~/Development, ~/Library/Android; hidden folders like ~/.gradle are never indexed).
+  2. Siri AI / Apple Intelligence: Siri > Turn Off Siri (or use Siri Classic),
+     and Apple Intelligence & Siri > Apple Intelligence off if you do not use it.
+  3. Battery: Battery > Charging (i) > Charge Limit (native since macOS 26.4;
+     AlDente is not needed for an 80-100% limit).
+  4. External monitor feels laggy? Displays > (monitor) > Refresh Rate: pick a
+     fixed rate instead of "Variable" (adaptive sync).
+  5. iCloud daemons cannot be stopped with SIP on: turn off the iCloud services
+     you do not use under Apple Account > iCloud.
+  6. After a macOS upgrade, leave the Mac on power overnight once so Spotlight
+     and media analysis can finish; then run ./post-update-check.sh.
+
+EOF
+if is_dry_run; then
+    print_success "Dry run finished; nothing was changed."
+else
+    print_success "Tweaks applied. Previous values: $BACKUP_DIR/keys.tsv"
+    print_info "Keyboard repeat and tap-to-click fully apply after logging out and back in."
+fi
+(( FAILURES == 0 ))
