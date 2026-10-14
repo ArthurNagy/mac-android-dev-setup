@@ -212,7 +212,6 @@ cat <<'EOF'
 Next steps:
   1. JetBrains Toolbox: install Android Studio (lands in ~/Applications).
   2. Xcode: open it once to accept the licence and install an iOS simulator runtime.
-  3. Rectangle: grant Accessibility access and pick shortcuts.
-  4. Run ./post-update-check.sh to verify everything.
+  3. Run ./post-update-check.sh to verify everything.
 EOF
 (( FAILURES == 0 ))

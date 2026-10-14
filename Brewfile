@@ -91,7 +91,6 @@ cask "font-jetbrains-mono-nerd-font"
 
 # --- GUI apps ----------------------------------------------------------------------------
 cask "ghostty"          # Terminal (replaces iTerm2). Adopts an existing /Applications/Ghostty.app
-cask "rectangle"        # Window management
 cask "visual-studio-code"
 cask "hiddenbar"        # Menu bar management (needs >= 1.11.1 on macOS 27)
 cask "appcleaner"       # Proper app uninstaller
